@@ -550,10 +550,10 @@ Box.test(resid02, type="Ljung-Box")
 ## Column 2
 ### Tabla
 ```{r}
-exogen2 <- matrix(0, nrow = 8, ncol = 8)
+exogen2 <- matrix(0, nrow = 6, ncol = 8)
 
 pronostico <- forecast(modelo1,
-                       h = 8, level = c(20,30,40,50,60,70,80,90,95),
+                       h = 6, level = c(20,30,40,50,60,70,80,90,95),
                        xreg = exogen2)
 
 
@@ -562,7 +562,7 @@ pronostico2026 <- data.frame(pronostico)
 pronostico2026 <- pronostico2026 %>% 
   mutate(Fecha = c("09/AGOST/2026",
                    "16/AGOST/2026","23/AGOST/2026","30/AGOST/2026",
-                   "06/SEPT/2026","13/SEPT/2026","20/SEPT/2026","27/SEPT/2026")) %>% 
+                   "06/SEPT/2026","13/SEPT/2026")) %>% 
   select(Fecha, everything())
 
 pronostico2026$Point.Forecast <- round(pronostico2026$Point.Forecast,2)
@@ -596,8 +596,7 @@ kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
 ### Gráfica
 ```{r, fig.width=10, fig.height=6}
 fechas_labels <- c("09 Agosto 26","16 Agosto 26",
-                   "23 Agosto 26","30 Agosto 26","06 Septiembre 26","13 Septiembre 26",
-                   "20 Septiembre 26","27 Septiembre 26")
+                   "23 Agosto 26","30 Agosto 26","06 Septiembre 26","13 Septiembre 26")
 tiempos_x <- as.numeric(time(pronostico$mean))
 
 autoplot(pronostico) +
@@ -608,7 +607,7 @@ autoplot(pronostico) +
   geom_hline(yintercept = pronostico2026$Hi.95[1], linetype = "dashed",
              color = "red", size = 1.1) +
 scale_x_continuous(breaks = tiempos_x, labels = fechas_labels) +
-  coord_cartesian(xlim=c(2026.1,2026.65), ylim=c(8.5,15)) +
+  coord_cartesian(xlim=c(2026.1,2026.62), ylim=c(8.4,14.8)) +
   labs(title = "Proyección del promedio semanal (Bs) del Dólar Blue",
     subtitle = "Agosto 2026", y = "Promedio Bs", x = "")  + theme_minimal() +
   theme(plot.background = element_rect(fill = "#0d1117", color = NA),
@@ -1153,9 +1152,15 @@ databcb <- databcb |>
 
 databcb$Brecha <- abs(databcb$usd_bcb - databcb$usdt)
 
-databcb$Estado <- ifelse(databcb$Brecha>=1, "Alta Diferencia",
-                         ifelse(databcb$Brecha<=0.99 & databcb$Brecha>=0.51,
-                                "Moderada","Baja - Casi similares"))
+databcb <- databcb %>%
+  mutate(
+    Estado = case_when(
+      Brecha >= 1.50 ~ "Crítica / Muy Alta",
+      Brecha >= 1.00 ~ "Alta",
+      Brecha >= 0.50 ~ "Moderada",
+      Brecha >= 0.20 ~ "Baja",
+      TRUE           ~ "Muy Baja / Mínima" # Para valores menores a 0.20
+    ))
 
 databcb$Brecha <- round(databcb$Brecha,2)
 
@@ -1372,10 +1377,10 @@ rownames(matriz_original)[rownames(matriz_original) == "BANCO DE LA NACIÃ\u0093
 # Para matriz_color
 rownames(matriz_color)[rownames(matriz_color) == "BANCO DE LA NACIÃ\u0093N ARGENTINA"] <- "BANCO DE LA NACION ARGENTINA"
 
-# 3. Heatmap interactivo (paleta oscura acorde a estilos2026.css)
+# --- 3. Heatmap interactivo con despliegue horizontal tipo columna fija ---
 heatmaply(
-  matriz_color,                 # Usa la matriz 0-1 para los colores
-  cellnote = matriz_original,   # Escribe los valores REALES dentro de los cuadros
+  matriz_color,                       # Usa la matriz 0-1 para los colores
+  cellnote = matriz_original,         # Escribe los valores REALES dentro de los cuadros
   cellnote_size = 10,
   custom_hovertext = matriz_original, # Muestra el valor REAL en el tooltip flotante
   dendrogram = "none",
@@ -1392,7 +1397,21 @@ heatmaply(
     paper_bgcolor = "#0d1117",
     plot_bgcolor  = "#0d1117",
     font = list(color = "#e6edf3"),
-    title = list(font = list(color = "#e6edf3"))
+    title = list(font = list(color = "#e6edf3")),
+    
+    # --- CONFIGURACIÓN DE DESPLAZAMIENTO HORIZONTAL ---
+    xaxis = list(
+      fixedrange = FALSE,                    # Permite arrastrar / hacer zoom horizontal
+      range = c(-0.5, 9.5),                  # Muestra 10 fechas inicialmente (ajustable)
+      rangeslider = list(                    # Agrega la barra de desplazamiento horizontal
+        visible = TRUE, 
+        thickness = 0.04,
+        bgcolor = "#161b22"
+      )
+    ),
+    yaxis = list(
+      fixedrange = TRUE                      # FIJA la columna de Entidades Bancarias
+    )
   )
 
 
@@ -1456,8 +1475,16 @@ library(tidyr)
 library(stringr)
 library(lubridate)
 
+meses_mapa <- c(
+  "ene"=1, "enero"=1,     "feb"=2, "febrero"=2,
+  "mar"=3, "marzo"=3,     "abr"=4, "abril"=4,
+  "may"=5, "mayo"=5,      "jun"=6, "junio"=6,
+  "jul"=7, "julio"=7,      "ago"=8, "agosto"=8,
+  "sep"=9, "septiembre"=9, "oct"=10, "octubre"=10,
+  "nov"=11, "noviembre"=11, "dic"=12, "diciembre"=12)
+
 df_burbujas <- matriz_original %>%
-  as.data.frame() %>%                          # <-- Se añade esta conversión aquí
+  as.data.frame() %>%
   tibble::rownames_to_column(var = "Banco") %>%
   mutate(Banco = iconv(Banco, to = "UTF-8")) %>%
   mutate(Banco = str_replace(Banco, "NACI.*N", "NACIÓN")) %>%
@@ -1465,50 +1492,74 @@ df_burbujas <- matriz_original %>%
   pivot_longer(
     cols = -Banco, 
     names_to = "Fecha_str", 
-    values_to = "Monto"
-  ) %>%
-  mutate(
-    Monto = as.numeric(Monto),
-    Fecha = dmy(paste0(Fecha_str, "-2026"))    # Sin locale para mayor compatibilidad
-  ) %>%
-  filter(!is.na(Monto) & Monto > 0) %>%
+    values_to = "Monto") %>%
+  mutate(Monto = as.numeric(Monto),
+    # Extraemos número de día y texto del mes por separado
+    dia = as.numeric(str_extract(Fecha_str, "\\d+")),
+    mes_txt = tolower(str_extract(Fecha_str, "[a-zA-Z]+")),
+    mes_num = unname(meses_mapa[mes_txt]),
+    # Construimos la fecha en formato ISO YYYY-MM-DD
+    Fecha = as.Date(sprintf("2026-%02d-%02d", mes_num, dia))) %>%
+  filter(!is.na(Monto) & Monto > 0 & !is.na(Fecha)) %>%
   arrange(Banco, Fecha)
 
+library(dplyr)
+library(stringr)
 library(highcharter)
 
-# Highcharts requiere map de categorías a índices numéricos (0, 1, 2...)
-bancos_hc <- sort(unique(df_burbujas$Banco))
+# 1. Filtrar datos válidos y extraer SOLO las fechas que existen en la tabla
+df_limpio <- df_burbujas %>%
+  filter(!is.na(Fecha) & !is.na(Monto) & Monto > 0)
+
+fechas_unicas <- sort(unique(df_limpio$Fecha))
+fechas_labels <- format(fechas_unicas, "%d-%b") # Etiquetas completas para el eje X
+
+bancos_hc <- sort(unique(df_limpio$Banco))
 bancos_hc <- str_replace(bancos_hc, "BANCO DE LA NACI.*", "BANCO DE LA NACION ARGENTINA")
 
-df_hc_burbujas <- df_burbujas %>%
+# 2. Crear índices de posición (X e Y)
+df_hc_burbujas <- df_limpio %>%
+  mutate(Banco = str_replace(Banco, "BANCO DE LA NACI.*", "BANCO DE LA NACION ARGENTINA")) %>%
   mutate(
-    Fecha_ms = datetime_to_timestamp(Fecha),
-    Banco_id = as.numeric(factor(Banco, levels = bancos_hc)) - 1
+    Fecha_id    = as.numeric(factor(Fecha, levels = fechas_unicas)) - 1,
+    Banco_id    = as.numeric(factor(Banco, levels = bancos_hc)) - 1,
+    Fecha_texto = format(Fecha, "%d-%b-%Y")
   )
 
+# 3. RANGO INICIAL: Muestra 20 fechas en pantalla (de 0 a 19)
+min_x <- 0
+max_x <- min(17, length(fechas_unicas) - 1)
 
-df_hc_burbujas <- df_hc_burbujas %>%
-  mutate(Banco = str_replace(Banco, "BANCO DE LA NACI.*", "BANCO DE LA NACION ARGENTINA"))
-
+# 4. Generar el gráfico
 g_burbujas_hc <- hchart(
   df_hc_burbujas, 
   "bubble", 
-  hcaes(x = Fecha_ms, y = Banco_id, size = Monto, group = Banco)
-) %>%
-  hc_chart(backgroundColor = "#0d1117") %>%
+  hcaes(x = Fecha_id, y = Banco_id, size = Monto, group = Banco, fecha_txt = Fecha_texto)) %>%
+  hc_chart(
+    backgroundColor = "#0d1117",
+    zoomType = "x",                            
+    panning = list(enabled = TRUE, type = "x")) %>%
   hc_title(
     text = "Matriz de Burbujas: Montos por Entidad Financiera",
-    style = list(color = "#e6edf3", fontWeight = "bold", fontFamily = "Segoe UI, sans-serif", fontSize = "16px")
-  ) %>%
+    style = list(color = "#e6edf3", fontWeight = "bold", fontFamily = "Segoe UI, sans-serif", fontSize = "16px")) %>%
   hc_xAxis(
-    type = "datetime",
+    type = "category",                         
+    categories = fechas_labels,                
     title = list(text = "", style = list(color = "#e6edf3")),
-    labels = list(style = list(color = "#b3b3b3")),
-    dateTimeLabelFormats = list(day = "%d-%b"),
+    labels = list(style = list(color = "#b3b3b3"), rotation = -45), # Inclinado para mejor lectura
     gridLineWidth = 1,
     gridLineColor = "#21262d",
-    lineColor = "#30363d"
-  ) %>%
+    lineColor = "#30363d",
+    # --- RANGO INICIAL DE 20 FECHAS ---
+    min = min_x,
+    max = max_x,
+    scrollbar = list(
+      enabled = TRUE,
+      liveRedraw = TRUE,
+      barBackgroundColor = "#21262d",
+      trackBackgroundColor = "#161b22",
+      buttonBackgroundColor = "#30363d",
+      lineColor = "#537D8D")) %>%
   hc_yAxis(
     title = list(text = "", style = list(color = "#e6edf3")),
     labels = list(style = list(color = "#b3b3b3")),
@@ -1518,22 +1569,18 @@ g_burbujas_hc <- hchart(
     max = length(bancos_hc) - 1,
     gridLineWidth = 1,
     gridLineColor = "#21262d",
-    lineColor = "#30363d"
-  ) %>%
+    lineColor = "#30363d") %>%
   hc_plotOptions(
     bubble = list(
       minSize = "3%",
       maxSize = "15%",
-      marker = list(fillOpacity = 0.7)
-    )
-  ) %>%
+      marker = list(fillOpacity = 0.7))) %>%
   hc_tooltip(
     useHTML = TRUE,
     headerFormat = "",
-    pointFormat = "<b>{point.series.name}</b><br>Fecha: {point.x:%d-%b-%Y}<br>Monto: <b>Bs. {point.z:,.0f}</b>",
+    pointFormat = "<b>{point.series.name}</b><br>Fecha: <b>{point.fecha_txt}</b><br>Monto: <b>Bs. {point.z:,.0f}</b>",
     backgroundColor = "#161b22",
-    style = list(color = "#e6edf3")
-  ) %>%
+    style = list(color = "#e6edf3")) %>%
   hc_legend(enabled = FALSE) %>%
   hc_add_theme(hc_theme_darkunica()) %>%
   hc_colors(c("#1ee29d", "#537D8D", "#2b93ff", "#ff9f43", "#ff4d4d",
@@ -1601,20 +1648,27 @@ transacciones_limpio <- transacciones |>
     -Entidad_Bancaria,
     ~ na_if(str_trim(.x), "\u2014") |>          # guion largo "—"
       str_replace_all("\\.", "") |>              # quitar separador de miles
-      as.integer()
-  ))
+      as.integer()))
 
 library(dplyr)
 library(tidyr)
 library(stringr)
-library(lubridate)
+library(plotly)
 
+# 1. Mapa de meses en español (Soporta abreviaciones y nombres completos)
+meses_mapa <- c(
+  "ene"=1, "enero"=1,     "feb"=2, "febrero"=2,
+  "mar"=3, "marzo"=3,     "abr"=4, "abril"=4,
+  "may"=5, "mayo"=5,      "jun"=6, "junio"=6,
+  "jul"=7, "julio"=7,      "ago"=8, "agosto"=8,
+  "sep"=9, "septiembre"=9, "oct"=10, "octubre"=10,
+  "nov"=11, "noviembre"=11, "dic"=12, "diciembre"=12
+)
+
+# 2. Limpieza y parseo seguro de fechas
 df_heatmap <- transacciones_limpio %>%
-  # Corregimos codificación por si quedó truncado el nombre de Nación Argentina
   mutate(Entidad_Bancaria = str_replace(Entidad_Bancaria, "NACI.*N", "NACIÓN")) %>%
-  # Excluimos la fila de totales
   filter(!str_detect(Entidad_Bancaria, "TOTALES|NÚMERO DE TRAN")) %>%
-  # Pivotamos de formato ancho a largo
   pivot_longer(
     cols = -Entidad_Bancaria,
     names_to = "Fecha_str",
@@ -1622,34 +1676,30 @@ df_heatmap <- transacciones_limpio %>%
   ) %>%
   mutate(
     Transacciones = as.numeric(Transacciones),
-    Fecha = dmy(paste0(Fecha_str, "-2026"))
+    
+    # Extraemos día y mes por separado para no depender de dmy()
+    dia = as.numeric(str_extract(Fecha_str, "\\d+")),
+    mes_txt = tolower(str_extract(Fecha_str, "[a-zA-Z]+")),
+    mes_num = unname(meses_mapa[mes_txt]),
+    Fecha = as.Date(sprintf("2026-%02d-%02d", mes_num, dia))
   ) %>%
-  # Reemplazamos NAs con 0 para que la matriz del heatmap no tenga huecos vacíos
+  filter(!is.na(Fecha)) %>% # Filtra cualquier fecha que haya quedado NA
   mutate(Transacciones = ifelse(is.na(Transacciones), 0, Transacciones)) %>%
   arrange(Entidad_Bancaria, Fecha)
 
-library(plotly)
-library(dplyr)
-
-# 1. Preparación de datos con normalización por fila (Banco)
-bancos_ord <- sort(unique(df_heatmap$Entidad_Bancaria), decreasing = TRUE)
-bancos_ord <- str_replace(bancos_ord, "BANCO DE LA NACI.*", "BANCO DE LA NACION ARGENTINA")
-
-library(dplyr)
-library(stringr)
+# 3. Preparar listas ordenadas y factores categóricos para Plotly
+fechas_unicas <- sort(unique(df_heatmap$Fecha))
+fechas_labels <- format(fechas_unicas, "%d-%b")
 
 df_heatmap_p <- df_heatmap %>%
-  mutate(Entidad_Bancaria = str_replace(Entidad_Bancaria, "BANCO DE LA NACI.*", "BANCO DE LA NACION ARGENTINA"))
-
-
-library(dplyr)
-library(plotly)
-
-# 1. Preprocesamiento: calcular el valor relativo (0 a 1) por fila/banco
-df_heatmap_p <- df_heatmap_p %>%
+  mutate(
+    Entidad_Bancaria = str_replace(Entidad_Bancaria, "BANCO DE LA NACI.*", "BANCO DE LA NACION ARGENTINA"),
+    Fecha_lbl = format(Fecha, "%d-%b"),
+    # Convertimos a Factor para asegurar orden cronológico en el eje categórico
+    Fecha_factor = factor(Fecha_lbl, levels = fechas_labels)
+  ) %>%
   group_by(Entidad_Bancaria) %>%
   mutate(
-    # Usamos case_when para evitar el problema de tamaños de vector
     valor_relativo = case_when(
       max(Transacciones, na.rm = TRUE) == min(Transacciones, na.rm = TRUE) ~ 0.5,
       TRUE ~ (Transacciones - min(Transacciones, na.rm = TRUE)) / 
@@ -1658,21 +1708,21 @@ df_heatmap_p <- df_heatmap_p %>%
   ) %>%
   ungroup()
 
-# 2. Definir la paleta de degradado oscura (acorde a estilos2026.css)
+# 4. Paleta verde oscura
 paleta_verde <- list(
-  c(0, "#0d1117"),   # Valor mínimo del banco -> Fondo oscuro
-  c(1, "#1ee29d")    # Valor máximo del banco -> Verde primario
+  c(0, "#0d1117"),   # Mínimo -> Fondo oscuro
+  c(1, "#1ee29d")    # Máximo -> Verde neón
 )
 
-# 3. Construcción del gráfico con el degradado relativo
+# 5. Construcción del Heatmap en Plotly
 heatmap_plotly <- plot_ly(
   data = df_heatmap_p,
-  x = ~Fecha,
+  x = ~Fecha_factor,
   y = ~Entidad_Bancaria,
-  z = ~valor_relativo,       # Mapeamos el color con la escala relativa (0 a 1)
+  z = ~valor_relativo,
   type = "heatmap",
-  colorscale = paleta_verde, # Escala de degradado verde/blanco
-  showscale = FALSE,         # Oculta la leyenda lateral
+  colorscale = paleta_verde,
+  showscale = FALSE,
   xgap = 1.5,
   ygap = 1.5,
   hoverongaps = FALSE,
@@ -1683,9 +1733,8 @@ heatmap_plotly <- plot_ly(
   ),
   hoverinfo = "text"
 ) %>%
-  # Mostramos el valor REAL de transacciones dentro del recuadro
   add_annotations(
-    x = ~Fecha,
+    x = ~Fecha_factor,
     y = ~Entidad_Bancaria,
     text = ~ifelse(Transacciones == 0 | is.na(Transacciones), "", format(Transacciones, big.mark = ",")),
     showarrow = FALSE,
@@ -1702,19 +1751,26 @@ heatmap_plotly <- plot_ly(
     ),
     xaxis = list(
       title = "",
-      type = "date",
-      tickformat = "%d-%b",
+      type = "category",              # Eje categórico (elimina huecos vacíos)
+      range = c(-0.5, 19.5),           # Muestra 20 fechas en pantalla (de la 0 a la 19)
+      tickangle = -45,                # Inclinación para lecturas cómodas
       tickfont = list(color = "#b3b3b3"),
-      showgrid = FALSE
+      showgrid = FALSE,
+      rangeslider = list(             # Barra de desplazamiento inferior
+        visible = TRUE,
+        thickness = 0.05,
+        bgcolor = "#161b22"
+      )
     ),
     yaxis = list(
       title = "",
+      fixedrange = TRUE,              # Congela las entidades bancarias
       tickfont = list(color = "#b3b3b3"),
       showgrid = FALSE
     ),
     paper_bgcolor = "#0d1117",
     plot_bgcolor = "#0d1117",
-    margin = list(l = 220, b = 50)
+    margin = list(l = 220, b = 60)
   )
 
 heatmap_plotly
@@ -2395,29 +2451,62 @@ ggplot(data = data_prueba, aes(x = x, y = y, group = 1)) +
 ## Column 2
 ### Valores Reales Diarios (Binance vs Dólar Flexible)
 ```{r}
-# Reconstruimos las fechas reales a partir de las etiquetas de texto usadas
-# en el pronóstico (mismo periodo), para poder buscar el valor real de cada serie.
-# Si una fecha aún no tiene dato disponible (p. ej. días futuros), queda como NA.
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(lubridate)
+
+# 1. Parseo de Fechas
 meses_mapa <- c("Enero"=1,"Febrero"=2,"Marzo"=3,"Abril"=4,"Mayo"=5,"Junio"=6,
                 "Julio"=7,"Agosto"=8,"Septiembre"=9,"Octubre"=10,"Noviembre"=11,"Diciembre"=12)
+
+anio_actual <- format(Sys.Date(), "%Y")
 
 fechas_reales <- as.Date(sapply(x, function(txt) {
   partes <- stringr::str_match(txt, "(\\d{1,2})\\s+(\\w+)$")
   dia <- as.numeric(partes[2])
   mes <- meses_mapa[[partes[3]]]
-  sprintf("2026-%02d-%02d", mes, dia)
+  sprintf("%s-%02d-%02d", anio_actual, mes, dia)
 }))
 
-# Valor real Binance (promedio diario)
+# 2. Valor real Binance
 valores_binance <- data.frame(Dia = fechas_reales) %>%
   left_join(df_dia_completo %>% mutate(Dia = as.Date(Dia)), by = "Dia") %>%
   pull(Promedio)
 
-# Valor real Dólar Referencial Flexible (BCB)
+# 3. Valor real BCB con lógica de horario y fin de semana
+ahora <- Sys.time() # Hora y fecha actual de ejecución
+hora_actual <- hm(format(ahora, "%H:%M"))
+
 valores_bcb <- data.frame(fecha = fechas_reales) %>%
   left_join(databcb %>% mutate(fecha = as.Date(fecha)), by = "fecha") %>%
-  pull(usd_bcb)
+  mutate(
+    # 1=Domingo, 7=Sábado en wday
+    es_fin_de_semana = wday(fecha) %in% c(1, 7),
+    
+    # Evalúa si corresponde aplicar la regla de repetición
+    debe_repetir = case_when(
+      # Si la fecha evaluada es anterior al día de hoy, mantiene el dato tal cual
+      fecha < as.Date(ahora) ~ FALSE,
+      
+      # Si es fin de semana (hoy) y ya pasaron las 09:00 AM
+      es_fin_de_semana & fecha == as.Date(ahora) & hora_actual >= hm("09:00") ~ TRUE,
+      
+      # Si es día laboral (hoy) y ya pasaron las 20:30 PM
+      !es_fin_de_semana & fecha == as.Date(ahora) & hora_actual >= hm("20:30") ~ TRUE,
+      
+      TRUE ~ FALSE
+    ),
+    
+    # Si cumple la condición y el dato del BCB vino como NA, lo marcamos para rellenar
+    usd_bcb_ajustado = ifelse(debe_repetir & is.na(usd_bcb), NA, usd_bcb)
+  ) %>%
+  # Copia el último valor NO nulo disponible hacia abajo
+  fill(usd_bcb_ajustado, .direction = "down") %>%
+  pull(usd_bcb_ajustado)
 
+# 4. Estructuración y Graficado
 data_real <- data.frame(
   x = factor(x, levels = x),
   Binance = round(valores_binance, 2),
@@ -2428,7 +2517,7 @@ data_real_long <- data_real %>%
   pivot_longer(cols = c(Binance, BCB_Flexible), names_to = "Serie", values_to = "Valor")
 
 ggplot(data_real_long, aes(x = x, y = Valor, color = Serie, group = Serie)) +
-  geom_line(size = 1.2, na.rm = TRUE) +
+  geom_line(linewidth = 1.2, na.rm = TRUE) +
   geom_point(size = 3, na.rm = TRUE) +
   geom_text(aes(label = ifelse(is.na(Valor), "", Valor)),
             vjust = -1.2, size = 3.2, fontface = "bold", show.legend = FALSE, na.rm = TRUE) +
@@ -2436,7 +2525,7 @@ ggplot(data_real_long, aes(x = x, y = Valor, color = Serie, group = Serie)) +
   scale_y_continuous(expand = expansion(mult = c(0.1, 0.2))) +
   labs(
     title = "Valores Reales Diarios (Binance vs Dólar Flexible)",
-    subtitle = "Mismo periodo del modelo ARIMA",
+    subtitle = "Mismo periodo del modelo ARIMA (Feriados o Sabado y Domingo son constantes al ultimo dato)",
     x = "Día de la semana",
     y = "Valor Bs/USD",
     color = "Serie"
