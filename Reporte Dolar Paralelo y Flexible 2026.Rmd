@@ -2425,6 +2425,10 @@ ggplot(data = data_prueba, aes(x = x, y = y, group = 1)) +
 ### Valores Reales Diarios (Binance vs Dólar Flexible)
 ```{r}
 library(stringr)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
 
 # 1. Parseo de Fechas
 meses_mapa <- c("Enero"=1,"Febrero"=2,"Marzo"=3,"Abril"=4,"Mayo"=5,"Junio"=6,
@@ -2444,35 +2448,38 @@ valores_binance <- data.frame(Dia = fechas_reales) %>%
   left_join(df_dia_completo %>% mutate(Dia = as.Date(Dia)), by = "Dia") %>%
   pull(Promedio)
 
-# 3. Valor real BCB con lógica de horario y fin de semana
-ahora <- Sys.time() # Hora y fecha actual de ejecución
+# 3. Valor real BCB con lógica de horario y repetición EXCLUSIVA de fin de semana
+ahora <- Sys.time()
+hoy <- as.Date(ahora)
 hora_actual <- hm(format(ahora, "%H:%M"))
 
 valores_bcb <- data.frame(fecha = fechas_reales) %>%
   left_join(databcb %>% mutate(fecha = as.Date(fecha)), by = "fecha") %>%
+  # Arrastramos el último valor no nulo para tener disponible el dato del viernes
+  mutate(usd_bcb_ultimo = usd_bcb) %>%
+  fill(usd_bcb_ultimo, .direction = "down") %>%
   mutate(
-    # 1=Domingo, 7=Sábado en wday
+    # 1 = Domingo, 7 = Sábado (wday por defecto en lubridate)
     es_fin_de_semana = wday(fecha) %in% c(1, 7),
     
-    # Evalúa si corresponde aplicar la regla de repetición
-    debe_repetir = case_when(
-      # Si la fecha evaluada es anterior al día de hoy, mantiene el dato tal cual
-      fecha < as.Date(ahora) ~ FALSE,
-      
-      # Si es fin de semana (hoy) y ya pasaron las 09:00 AM
-      es_fin_de_semana & fecha == as.Date(ahora) & hora_actual >= hm("09:00") ~ TRUE,
-      
-      # Si es día laboral (hoy) y ya pasaron las 20:30 PM
-      !es_fin_de_semana & fecha == as.Date(ahora) & hora_actual >= hm("20:30") ~ TRUE,
-      
+    # Validamos reglas de horario para el día de ejecución (hoy) y fechas futuras
+    hora_valida = case_when(
+      fecha < hoy ~ TRUE,
+      fecha == hoy & es_fin_de_semana & hora_actual >= hm("09:00") ~ TRUE,
+      fecha == hoy & !es_fin_de_semana & hora_actual >= hm("20:30") ~ TRUE,
       TRUE ~ FALSE
     ),
     
-    # Si cumple la condición y el dato del BCB vino como NA, lo marcamos para rellenar
-    usd_bcb_ajustado = ifelse(debe_repetir & is.na(usd_bcb), NA, usd_bcb)
+    # Asignación final:
+    # - Si no cumple regla de hora/fecha actual, queda NA.
+    # - Si es Sábado o Domingo, toma el valor arrastrado del Viernes.
+    # - Si es día laboral, mantiene el valor original de BCB (NA si no existe).
+    usd_bcb_ajustado = case_when(
+      !hora_valida ~ NA_real_,
+      es_fin_de_semana ~ usd_bcb_ultimo,
+      TRUE ~ usd_bcb
+    )
   ) %>%
-  # Copia el último valor NO nulo disponible hacia abajo
-  fill(usd_bcb_ajustado, .direction = "down") %>%
   pull(usd_bcb_ajustado)
 
 # 4. Estructuración y Graficado
@@ -2494,7 +2501,7 @@ ggplot(data_real_long, aes(x = x, y = Valor, color = Serie, group = Serie)) +
   scale_y_continuous(expand = expansion(mult = c(0.1, 0.2))) +
   labs(
     title = "Valores Reales Diarios (Binance vs Dólar Flexible)",
-    subtitle = "(Feriados o Sabado y Domingo son constantes al ultimo dato del BCB)",
+    subtitle = "(Fin de semana mantiene el valor del viernes; días sin dato no se grafican)",
     x = "Día de la semana",
     y = "Valor Bs/USD",
     color = "Tipo de Cambio"
@@ -2514,7 +2521,6 @@ ggplot(data_real_long, aes(x = x, y = Valor, color = Serie, group = Serie)) +
     panel.grid.major = element_line(color = "#2d2d2d"),
     panel.grid.minor = element_blank()
   )
-
 ```
 
 
