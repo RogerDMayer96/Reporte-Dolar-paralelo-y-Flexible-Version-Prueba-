@@ -233,23 +233,56 @@ tabla_kable
 
 ### Valor Actual - Binance
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
-# Traemos también la serie del dólar referencial flexible (BCB) para obtener
-# su último valor publicado y mostrarlo junto al de Binance
+library(httr)
+library(jsonlite)
+library(dplyr)
+library(rvest)
+
+# 1. Obtener la serie histórica mediante la API como lo venías haciendo
 fetch_ultimo_bcb <- function(api_id) {
   res <- GET(paste0("https://usdtbol.com/api/", api_id),
-             query = list(callback = "cb"),
+             query = list(callback = "cb", t = format(Sys.time(), "%s")),
              add_headers("User-Agent" = "Mozilla/5.0", "Referer" = "https://usdtbol.com/"))
   raw <- content(res, "text", encoding = "UTF-8")
   json_clean <- sub("^[a-zA-Z0-9_$]+\\((.*)\\);?$", "\\1", raw)
   data <- fromJSON(json_clean)
-  data.frame(fecha = as.POSIXct(data$times, origin = "1970-01-01"),
-             precio = as.numeric(data$list))
+  
+  t_val <- if (!is.null(data$times) && max(data$times, na.rm = TRUE) > 1e12) data$times / 1000 else data$times
+  
+  data.frame(
+    fecha = as.POSIXct(t_val, origin = "1970-01-01", tz = "UTC"),
+    precio = as.numeric(data$list)
+  )
 }
 
-df_bcb_ultimo <- fetch_ultimo_bcb("d5s4yr95l36h")
+df_bcb_ultimo <- fetch_ultimo_bcb("d5s4yr95l36h") %>% filter(!is.na(precio))
 
+# 2. Extraer el valor real y actualizado directamente del HTML de la web
+webpage <- read_html("https://usdtbol.com/")
+tco_texto <- webpage %>% html_node(".bcb-tco-num") %>% html_text(trim = TRUE)
+precio_real <- as.numeric(gsub(",", ".", tco_texto))
+
+# 3. Fusionar o corregir el último dato en el DataFrame histórico
+# Verificamos si la fecha más alta del histórico corresponde a hoy o si falta agregarla
+hoy <- Sys.Date()
+ultima_fecha_df <- as.Date(max(df_bcb_ultimo$fecha))
+
+if (ultima_fecha_df < hoy) {
+  # Si la API no tiene el registro de hoy, creamos la fila nueva y la añadimos al final
+  nueva_fila <- data.frame(
+    fecha = as.POSIXct(hoy, tz = "UTC"),
+    precio = precio_real
+  )
+  df_bcb_ultimo <- bind_rows(df_bcb_ultimo, nueva_fila)
+} else {
+  # Si el día ya existe pero la API trae el valor desactualizado (ej. 11.50), 
+  # reemplazamos el último precio por el real extraído del HTML (11.54)
+  df_bcb_ultimo$precio[nrow(df_bcb_ultimo)] <- precio_real
+}
+
+# 4. Obtener tu último registro ya corregido para usarlo en el flexdashboard o tus análisis
+ultimo_bcb <- df_bcb_ultimo %>% arrange(fecha) %>% slice_tail(n = 1)
 ultimo_binance <- df %>% arrange(fecha) %>% slice_tail(n = 1)
-ultimo_bcb <- df_bcb_ultimo %>% filter(!is.na(precio)) %>% arrange(fecha) %>% slice_tail(n = 1)
 
 library(flexdashboard)
 valueBox(
@@ -1096,14 +1129,19 @@ El valor referencial del dólar estadounidense para operaciones con el exterior 
 ```{r}
 library(jsonlite)
 library(httr)
+library(rvest)   # <--- Necesario para leer el HTML de la web
+library(dplyr)
+library(tidyr)
+library(zoo)
+library(knitr)
+library(kableExtra)
 
 fetch_usdtbol_fixed <- function(api_id, col_name) {
   url <- paste0("https://usdtbol.com/api/", api_id)
   
-  # Incluimos obligatoriamente el parámetro callback = "cb"
   res <- GET(
     url, 
-    query = list(callback = "cb"),
+    query = list(callback = "cb", t = format(Sys.time(), "%s")), # Cache-buster por si acaso
     add_headers(
       "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
       "Referer"    = "https://usdtbol.com/"
@@ -1112,30 +1150,33 @@ fetch_usdtbol_fixed <- function(api_id, col_name) {
   
   raw <- content(res, "text", encoding = "UTF-8")
   
-  # Si el servidor responde "-1", avisar claramente
   if (trimws(raw) == "-1") {
     stop(paste("El endpoint", api_id, "devolvió -1. Verifica que el ID del endpoint sea correcto."))
   }
   
-  # Limpiar el envoltorio cb(...) -> deja solo el JSON
-  # Remueve 'cb(' del inicio y ')' o ');' del final
-  json_clean <- sub("^^[a-zA-Z0-9_$]+\\((.*)\\);?$", "\\1", raw)
-  # Parsear JSON
+  json_clean <- sub("^[a-zA-Z0-9_$]+\\((.*)\\);?$", "\\1", raw)
   data <- fromJSON(json_clean)
   
+  t_val <- if (!is.null(data$times) && max(data$times, na.rm = TRUE) > 1e12) data$times / 1000 else data$times
+  
   df <- data.frame(
-    fecha = as.POSIXct(data$times, origin = "1970-01-01"),
-    precio = data$list
+    fecha = as.POSIXct(t_val, origin = "1970-01-01", tz = "UTC"),
+    precio = as.numeric(data$list)
   )
   
   colnames(df)[2] <- col_name
   return(df)
 }
 
-# Probamos con las dos series
-#df_serie1 <- fetch_usdtbol_fixed("41j11x65l36h", "paralelo")
+# 1. Obtenemos la serie histórica de la API
 databcb <- fetch_usdtbol_fixed("d5s4yr95l36h", "serie_d5s")
 
+# 2. Extraemos el valor real y actualizado directamente del HTML de la web
+webpage <- read_html("https://usdtbol.com/")
+tco_texto <- webpage %>% html_node(".bcb-tco-num") %>% html_text(trim = TRUE)
+precio_real <- as.numeric(gsub(",", ".", tco_texto))
+
+# 3. Procesamos las fechas del histórico
 databcb <- databcb %>%
   mutate(fecha = as.Date(fecha)) %>%
   complete(fecha = seq(min(fecha), max(fecha), by = "day")) %>%
@@ -1143,7 +1184,15 @@ databcb <- databcb %>%
 
 databcb$serie_d5s <- na.approx(databcb$serie_d5s, method = "linear")
 
-# Join por fecha para evitar desfase de longitud por timezone en df_dia$Dia (POSIXct)
+# 4. Forzamos/actualizamos el último registro con el precio real de la web
+hoy <- Sys.Date()
+if (max(databcb$fecha) < hoy) {
+  databcb <- bind_rows(databcb, data.frame(fecha = hoy, serie_d5s = precio_real))
+} else {
+  databcb$serie_d5s[nrow(databcb)] <- precio_real
+}
+
+# 5. Continuamos con tu lógica de cruce y cálculo de brechas
 df_dia_filtrado <- df_dia %>%
   mutate(fecha = as.Date(Dia)) %>%
   filter(fecha >= as.Date(min(databcb$fecha, na.rm = TRUE)), 
@@ -1153,11 +1202,11 @@ df_dia_filtrado <- df_dia %>%
 databcb <- databcb %>%
   left_join(df_dia_filtrado, by = "fecha")
 
-databcb <- databcb |> 
+databcb <- databcb |>  
   rename(usd_bcb = serie_d5s)
 
-databcb <- databcb |> 
-  transform(usd_bcb = round(usd_bcb,2))
+databcb <- databcb |>  
+  transform(usd_bcb = round(usd_bcb, 2))
 
 databcb$Brecha <- abs(databcb$usd_bcb - databcb$usdt)
 
@@ -1168,16 +1217,16 @@ databcb <- databcb %>%
       Brecha >= 1.00 ~ "Alta",
       Brecha >= 0.50 ~ "Moderada",
       Brecha >= 0.20 ~ "Baja",
-      TRUE           ~ "Muy Baja / Mínima" # Para valores menores a 0.20
+      TRUE            ~ "Muy Baja / Mínima"
     ))
 
-databcb$Brecha <- round(databcb$Brecha,2)
+databcb$Brecha <- round(databcb$Brecha, 2)
 
-kable(databcb, caption = "Información del BCB y Binance", align = c("l", "c", "c", "c","c"))%>%
-kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+# 6. Renderizamos la tabla final
+kable(databcb, caption = "Información del BCB y Binance", align = c("l", "c", "c", "c", "c")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
                 full_width = FALSE, font_size = 13) %>%
   kable_minimal()
-
 ```
 
 ## Column 2 {.tabset}
