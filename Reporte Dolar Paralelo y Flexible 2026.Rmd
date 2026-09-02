@@ -1379,7 +1379,7 @@ library(dplyr)
 library(stringr)
 library(tidyr)
 
-url_tabla <- "https://www.bcb.gob.bo/tco_evolutivo.php"
+url_tabla <- "https://www.bcb.gob.bo/bcb_tco_publico_evolutivo.php"
 
 # --- 1. Descargar y parsear el HTML -----------------------------------
 pagina <- read_html(url_tabla)
@@ -1478,8 +1478,6 @@ heatmaply(
 ### Montos por Entidad Financiera
 
 ```{r}
-url_tabla <- "https://www.bcb.gob.bo/tco_evolutivo.php"
-
 # --- 1. Descargar y parsear el HTML -------------------------------------
 pagina <- read_html(url_tabla)
 
@@ -1653,7 +1651,6 @@ g_burbujas_hc
 ### Número de Transacciones
 
 ```{r}
-url_tabla <- "https://www.bcb.gob.bo/tco_evolutivo.php"
 
 # --- 1. Descargar y parsear el HTML -------------------------------------
 # Se fuerza encoding UTF-8 explicitamente para evitar problemas con tildes
@@ -1694,7 +1691,7 @@ extraer_tabla_bcb <- function(pagina, texto_titulo) {
 }
 
 # --- 3. Extraer la tabla "Numero de Transacciones" ------------------------
-transacciones <- extraer_tabla_bcb(pagina, "Numero de Transacciones")
+transacciones <- extraer_tabla_bcb(pagina, "Número de Transacciones")
 
 names(transacciones)[1] <- "Entidad_Bancaria"
 
