@@ -76,8 +76,60 @@ fecha_cierre <- floor_date(Sys.Date() - days(1), unit = "week")
 
 library(jsonlite)
 library(httr)
+library(xml2)
 
-res <- GET("https://usdtbol.com/api/41j11x65l36h", query = list(callback = "cb"),
+# ------------------------------------------------------------------------------
+# Wrappers de seguridad para llamadas de red (GET / read_html).
+# NO cambian que datos se piden ni como se procesan despues: solo agregan un
+# timeout explicito y un mensaje claro si la fuente externa no responde, para
+# que el render no se quede colgado indefinidamente en Posit Connect Cloud.
+# ------------------------------------------------------------------------------
+.cache_red <- new.env()
+
+safe_GET <- function(url, ..., timeout_seg = 20) {
+  # Clave de cache: url + query sin el parametro 't' (cache-buster por hora)
+  args <- list(...)
+  q <- args$query
+  if (!is.null(q)) q <- q[setdiff(names(q), "t")]
+  key <- paste(url, paste(names(q), unlist(q), collapse = "&"), sep = "|")
+  if (exists(key, envir = .cache_red, inherits = FALSE)) {
+    return(get(key, envir = .cache_red, inherits = FALSE))
+  }
+  res <- tryCatch(
+    httr::GET(url, httr::timeout(timeout_seg), ...),
+    error = function(e) {
+      stop("safe_GET: no se pudo conectar con ", url,
+           " dentro de ", timeout_seg, "s (", conditionMessage(e), ")", call. = FALSE)
+    }
+  )
+  assign(key, res, envir = .cache_red)
+  res
+}
+
+safe_read_html <- function(url, encoding = "UTF-8", timeout_seg = 20,
+                            user_agent = "Mozilla/5.0") {
+  key <- paste("html", url, encoding, sep = "|")
+  if (exists(key, envir = .cache_red, inherits = FALSE)) {
+    return(get(key, envir = .cache_red, inherits = FALSE))
+  }
+  res <- tryCatch(
+    httr::GET(url, httr::timeout(timeout_seg), httr::add_headers("User-Agent" = user_agent)),
+    error = function(e) {
+      stop("safe_read_html: no se pudo conectar con ", url,
+           " dentro de ", timeout_seg, "s (", conditionMessage(e), ")", call. = FALSE)
+    }
+  )
+  if (httr::http_error(res)) {
+    stop("safe_read_html: la respuesta HTTP de ", url,
+         " fue un error (status ", httr::status_code(res), ")", call. = FALSE)
+  }
+  doc <- xml2::read_html(httr::content(res, "text", encoding = encoding), encoding = encoding)
+  assign(key, doc, envir = .cache_red)
+  doc
+}
+# ------------------------------------------------------------------------------
+
+res <- safe_GET("https://usdtbol.com/api/41j11x65l36h", query = list(callback = "cb"),
   add_headers("User-Agent" = "Mozilla/5.0", "Referer" = "https://usdtbol.com/"))
 raw <- content(res, "text", encoding = "UTF-8")
 
@@ -88,6 +140,48 @@ data <- fromJSON(json_str)
 df <- data.frame(fecha = as.POSIXct(data$times, origin = "1970-01-01"),
                  precio = data$list)
 
+library(dplyr)
+library(readr)
+library(lubridate)
+
+# ------------------------------------------------------------------
+# 1. Descargar y formatear la tabla del dólar blue en el MISMO formato
+#    que tu tabla de USDT: data.frame(fecha, precio)
+# ------------------------------------------------------------------
+res_blue <- safe_GET("https://api.dolarbluebolivia.click/v1/chart/all.csv")
+raw_blue <- content(res_blue, "text", encoding = "UTF-8")
+
+df_blue <- read_csv(I(raw_blue), show_col_types = FALSE) %>%
+  mutate(
+    fecha  = as.POSIXct(datetime, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"),
+    precio = (blue_buy + blue_sell) / 2   # o blue_buy / blue_sell si prefieres un solo lado
+  ) %>%
+  select(fecha, precio) %>%
+  filter(!is.na(fecha), !is.na(precio)) %>%
+  mutate(fuente = "blue_historico")
+
+# ------------------------------------------------------------------
+# 2. Unir SIN transformar a diario, respetando la granularidad
+#    original de cada fuente. El blue histórico solo llena los días
+#    donde el USDT todavía no tiene ningún dato.
+# ------------------------------------------------------------------
+df_usdt <- df %>%
+  mutate(fuente = "usdt_p2p")
+
+fechas_con_usdt <- unique(as_date(df_usdt$fecha))
+
+df_blue_relleno <- df_blue %>%
+  filter(!(as_date(fecha) %in% fechas_con_usdt))
+
+df_final <- bind_rows(df_usdt, df_blue_relleno) %>%
+     arrange(fecha)
+
+#df <- df_usdt
+df <- df_final
+
+df <- df |> 
+  filter(precio>0)
+
 library(plotly)
 library(htmlwidgets)
 library(tseries)
@@ -97,12 +191,9 @@ df$fecha <- as.POSIXct(df$fecha, format = "%m/%d/%Y %H:%M")
 df$precio <- as.numeric(df$precio)
 
 fig <- plot_ly(data = df,  x = ~fecha,  y = ~precio,
-               type = "scatter",  mode = "lines+markers",
-               line = list(color = "#1ee29d"),
-               marker = list(size = 4, color = "#1ee29d"),
-               hovertext = ~paste(format(fecha, "%d/%m/%Y"),"- Hora:",
-                                  format(fecha, "%H:%M"),"=> [Bs.", precio,"]"),
-               hoverinfo = "text") %>%
+               type = "scatter",  mode = "lines",
+               line = list(color = "#1ee29d", width = 1.5),
+               hovertemplate = "%{x|%d/%m/%Y - Hora: %H:%M} => [Bs. %{y}]<extra></extra>") %>%
       config(displaylogo = FALSE,
       modeBarButtonsToRemove = c("zoom2d", "pan2d", "lasso2d",
                                  "autoScale2d", "hoverCompareCartesian"))
@@ -117,35 +208,13 @@ fig <- fig %>%
                 list(count = 2, label = "2 días", step = "day", stepmode = "backward"),
                 list(count = 7, label = "1 semana", step = "day", stepmode = "backward"),
                 list(count = 1, label = "1 mes", step = "month", stepmode = "backward"),
-                list(count = 3, label = "3 meses", step = "month", stepmode = "backward"),
-                list(count = 7, label = "7 meses", step = "month", stepmode = "backward"),
                 list(step = "all", label = "Completo")),font = list(color = "#0d1117"))),
          yaxis = list(title = "Valor del Dólar (Bs.)", autorange = TRUE), 
          plot_bgcolor = "#0d1117", paper_bgcolor = "#0d1117", 
          font = list(color = "#e6edf3"))
 
 # Script JS: recalcula eje Y dinámicamente según rango visible en X
-fig <- onRender(fig, "function(el, x) {
-    el.on('plotly_relayout', function(e) {
-      // Solo actúa si se modificó el rango del eje X
-      if(e['xaxis.range[0]'] && e['xaxis.range[1]']) {
-        var gd = el;
-        var x0 = new Date(e['xaxis.range[0]']);
-        var x1 = new Date(e['xaxis.range[1]']);
-
-        // Buscar datos visibles
-        var yVisible = [];
-        gd.data.forEach(trace => {
-          if(trace.x && trace.y) {
-            for(let i = 0; i < trace.x.length; i++) {
-              let xi = new Date(trace.x[i]);
-              if(xi >= x0 && xi <= x1) yVisible.push(trace.y[i]); } } });
-
-        // Calcular min y max visibles
-        if(yVisible.length > 0) {
-          var ymin = Math.min(...yVisible);
-          var ymax = Math.max(...yVisible);
-          Plotly.relayout(gd, {'yaxis.range': [ymin, ymax]}); } } }); } ")
+fig <- onRender(fig, js_ajuste_y)
 
 fig
 
